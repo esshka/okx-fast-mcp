@@ -51,6 +51,8 @@ Start the MCP server:
 ```bash
 python server.py
 ```
+> **Note**: When running `python server.py`, ensure you are in the project's root directory (`/Users/esshka/okx-mcp-2`) for the relative imports within the `okx_mcp` package to resolve correctly.
+```
 
 The server exposes the following tools to MCP clients:
 
@@ -61,7 +63,7 @@ The following tools are exposed via the MCP server:
 | Tool                          | Description                                                                                                | Key Parameters                                                                      | Auth Required |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ------------- |
 | `get_price`                   | Get latest market ticker price for a specific instrument.                                                  | `instrument` (e.g., "BTC-USDT", "ETH-USDT-SWAP")                                    | No            |
-| `get_candlesticks`            | Get candlestick (k-line) data.                                                                             | `instrument`, `bar` (e.g., "1m", "1H", default: "1m"), `limit` (default: 100)       | No            |
+| `get_candlesticks`            | Get candlestick (k-line) data. Supports json (default), csv, md, yaml formats.                             | `instrument`, `bar` (e.g., "1m", "1H", default: "1m"), `limit` (default: 100), `format` (optional, default: "json") | No            |
 | `get_account_balance`         | Get account balance information (total equity, details per currency).                                      | -                                                                                   | Yes           |
 | `get_positions`               | Get current open positions.                                                                                | `instrument_type` (e.g., "SWAP", default: "SWAP"), `instrument_id` (optional)     | Yes           |
 | `get_trade_history`           | Get recent trade (fill) history.                                                                           | `instrument_type`, `instrument_id`, `order_id` (all optional), `limit` (default: 100) | Yes           |
@@ -70,6 +72,14 @@ The following tools are exposed via the MCP server:
 | `place_spot_limit_order`    | Place a **limit** order for a **SPOT** instrument.                                                           | `instrument` (e.g., "BTC-USDT"), `trade_mode` ("cash"/"cross"), `side`, `size` (**Base Currency**), `price` | Yes           |
 | `place_spot_market_order`   | Place a **market** order for a **SPOT** instrument.                                                          | `instrument` (e.g., "BTC-USDT"), `trade_mode` ("cash"/"cross"), `side`, `size` (**Base Currency**) | Yes           |
 | `calculate_position_size`     | Calculate contracts needed for a given USDT position size on a **SWAP** instrument.                        | `instrument` (e.g., "BTC-USDT-SWAP"), `usdt_size` (float)                           | No            |
+| `place_grid_algo_order`     | Place a **Grid Algo Order** (Spot or Contract).                                                              | `instrument_id`, `algo_order_type` ("grid"/"contract_grid"), `max_price`, `min_price`, `grid_num`, plus type-specific params (see docstring/API docs) | Yes           |
+| `amend_grid_algo_order`     | Amend an existing **Grid Algo Order** (SL/TP/Triggers).                                                      | `algo_id`, `instrument_id`, plus optional params (`sl_trigger_price`, `tp_trigger_price`, etc.) | Yes           |
+| `stop_grid_algo_order`      | Stop a specific **Grid Algo Order**.                                                                         | `algo_id`, `instrument_id`, `algo_order_type`, `stop_type` ("1"/"2")                | Yes           |
+| `get_grid_algo_order_list`  | Get a list of pending **Grid Algo Orders**. Supports json (default), csv, md, yaml formats.                  | `algo_order_type` ("grid"/"contract_grid"), `format` (optional, default: "json"), plus optional filters (see docstring) | Yes           |
+| `get_grid_algo_order_details`| Get details for a specific **Grid Algo Order**.                                                              | `algo_order_type` ("grid"/"contract_grid"), `algo_id`                               | Yes           |
+| `get_funding_rate`            | Get the current funding rate for a **SWAP** instrument. Supports json (default), csv, md, yaml formats.      | `instrument_id` (e.g., "BTC-USDT-SWAP"), `format` (optional, default: "json")       | No            |
+| `get_funding_rate_history`    | Get the historical funding rates for a **SWAP** instrument. Supports json (default), csv, md, yaml formats.  | `instrument_id`, `format` (optional, default: "json"), `before` (optional), `after` (optional), `limit` (optional, default 100) | No            |
+| `get_open_interest`           | Get the total open interest for contracts (**SWAP**, **FUTURES**, **OPTION**). Supports json (default), csv, md, yaml formats. | `instrument_type`, `format` (optional, default: "json"), `underlying` (optional), `instrument_family` (optional), `instrument_id` (optional) | No            |
 
 **Important Note on Order Sizes:**
 
@@ -119,7 +129,50 @@ try:
             "size": "0.001" # Size in Base Currency (ETH) for SPOT
         }
         spot_order_result = client.invoke("place_spot_market_order", spot_order_details)
-        print(f"Spot Market Order Result: {spot_order_result}")
+    print(f"Spot Market Order Result: {spot_order_result}")
+
+    # --- Algo Order Examples (Requires API Keys Set) ---
+    if client.is_tool_available("get_grid_algo_order_list"):
+        # Get pending contract grid orders as CSV
+        grid_list_csv = client.invoke("get_grid_algo_order_list", {"algo_order_type": "contract_grid"})
+        print(f"Pending Contract Grid Orders (CSV):\n{grid_list_csv}")
+
+        # Get details for a specific grid order (replace '123...' with a real ID)
+        # grid_details = client.invoke("get_grid_algo_order_details", {"algo_order_type": "grid", "algo_id": "123..."})
+        # print(f"Grid Order Details: {grid_details}")
+
+    # --- Public Data Examples ---
+    # Get candlestick data (default JSON format)
+    candles_json = client.invoke("get_candlesticks", {"instrument": "ETH-USDT", "bar": "1H", "limit": 3})
+    print(f"ETH-USDT 1H Candlesticks (last 3, JSON):\n{candles_json}")
+    # Get candlestick data as CSV
+    candles_csv = client.invoke("get_candlesticks", {"instrument": "ETH-USDT", "bar": "1H", "limit": 3, "format": "csv"})
+    print(f"ETH-USDT 1H Candlesticks (last 3, CSV):\n{candles_csv}")
+    # Get candlestick data as Markdown
+    candles_md = client.invoke("get_candlesticks", {"instrument": "ETH-USDT", "bar": "1H", "limit": 3, "format": "md"})
+    print(f"ETH-USDT 1H Candlesticks (last 3, Markdown):\n{candles_md}")
+
+    # Get funding rate for BTC-USDT-SWAP (default JSON)
+    funding_rate_json = client.invoke("get_funding_rate", {"instrument_id": "BTC-USDT-SWAP"})
+    print(f"BTC-USDT-SWAP Funding Rate (JSON): {funding_rate_json}")
+    # Get funding rate as CSV
+    funding_rate_csv = client.invoke("get_funding_rate", {"instrument_id": "BTC-USDT-SWAP", "format": "csv"})
+    print(f"BTC-USDT-SWAP Funding Rate (CSV):\n{funding_rate_csv}")
+
+    # Get funding rate history (default JSON)
+    funding_history_json = client.invoke("get_funding_rate_history", {"instrument_id": "BTC-USDT-SWAP", "limit": 5})
+    print(f"BTC-USDT-SWAP Funding History (last 5, JSON): {funding_history_json}")
+    # Get funding rate history as Markdown
+    funding_history_md = client.invoke("get_funding_rate_history", {"instrument_id": "BTC-USDT-SWAP", "limit": 5, "format": "md"})
+    print(f"BTC-USDT-SWAP Funding History (last 5, Markdown):\n{funding_history_md}")
+
+    # Get open interest for all SWAP contracts (default JSON)
+    swap_oi_json = client.invoke("get_open_interest", {"instrument_type": "SWAP"})
+    print(f"SWAP Open Interest (JSON):\n{swap_oi_json}")
+    # Get open interest specifically for ETH-USDT-SWAP as CSV
+    eth_swap_oi_csv = client.invoke("get_open_interest", {"instrument_type": "SWAP", "instrument_id": "ETH-USDT-SWAP", "format": "csv"})
+    print(f"ETH-USDT-SWAP Open Interest (CSV):\n{eth_swap_oi_csv}")
+
 
 except Exception as e:
     print(f"An error occurred: {e}")
@@ -131,18 +184,40 @@ except Exception as e:
 This server is built with [FastMCP](https://gofastmcp.com), the Pythonic way to build MCP servers. FastMCP provides a clean interface for exposing functionality to LLMs:
 
 ```python
+# okx_mcp/tools.py
+import logging
+from typing import Dict, Any
 from fastmcp import FastMCP
+from .client import OKXClient
+from .services import OKXService # Assuming OKXService is used in tools
 
+# Initialize client and service instances (example)
+okx_client = OKXClient()
+okx_service = OKXService(okx_client)
+
+# Create the FastMCP instance
 mcp = FastMCP("OKX API 🚀")
 
+# Example tool definition using the instances
 @mcp.tool()
 def get_price(instrument: str) -> Dict[str, Any]:
     """Get the latest market ticker price for a specific OKX instrument."""
-    # Implementation...
-    
-# More tools...
+    # Example implementation using okx_service
+    return okx_service.get_instrument_price(instrument)
+
+# ... other tool definitions using @mcp.tool() ...
+
+# server.py (Root level)
+import logging
+import sys
+from okx_mcp.config import setup_logging
+from okx_mcp.tools import mcp # Import the configured mcp instance
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 if __name__ == "__main__":
+    logger.info("Starting FastMCP server...")
     mcp.run()
 ```
 
@@ -170,7 +245,7 @@ Claude products like Cursor, Claude CLI, and Claude Desktop use an `mcp.json` co
   "mcpServers": {
     "okx": {
       "command": "/path/to/your/python",
-      "args": ["/path/to/your/okx-mcp-server/server.py"],
+      "args": ["/path/to/your/okx-mcp-2/server.py"],
       "env": {
         "OKX_API_KEY": "your_api_key",
         "OKX_SECRET_KEY": "your_secret_key",
@@ -189,12 +264,23 @@ Claude products like Cursor, Claude CLI, and Claude Desktop use an `mcp.json` co
 Once configured, you can ask Claude to perform tasks using the specific OKX tools:
 
 *   "Use `get_price` for the instrument SOL-USDT-SWAP."
-*   "Call `get_candlesticks` for ETH-USDT with a bar of '1H' and limit 50."
+*   "Call `get_candlesticks` for ETH-USDT with a bar of '1H' and limit 50. Return the data using format 'csv'."
+*   "Invoke `get_candlesticks` for BTC-USDT, bar '1m', limit 5. Use the default JSON format."
+*   "Get the last 10 candlesticks for SOL-USDT-SWAP (15m bar) using `get_candlesticks` and format it as a markdown table ('md')."
 *   "Invoke `get_account_balance`."
 *   "Use `get_positions` for instrument_type 'SWAP'."
 *   "Can you call `place_swap_limit_order`? Instrument BTC-USDT-SWAP, side buy, size 50 USDT, price 62500." (Use caution with real trading!)
 *   "Use `place_spot_market_order` to sell 0.1 ETH on ETH-USDT using cash trade mode." (Use caution!)
 *   "What contract size do I need for 250 USDT on ADA-USDT-SWAP? Use `calculate_position_size`."
+*   "Call `place_grid_algo_order` for a spot grid on BTC-USDT, max price 70000, min price 60000, 10 grids, quote size 1000 USDT." (Use caution!)
+*   "Use `amend_grid_algo_order` for algo ID '12345...' on BTC-USDT-SWAP to set sl_trigger_price to 58000." (Use caution!)
+*   "Invoke `stop_grid_algo_order` for algo ID '12345...' on BTC-USDT, type 'grid', stop type '1'." (Use caution!)
+*   "Call `get_grid_algo_order_list` for algo_order_type 'contract_grid'. Return the data using format 'csv'."
+*   "Use `get_grid_algo_order_details` for algo_order_type 'grid' and algo_id '67890...'."
+*   "What is the current funding rate? Use `get_funding_rate` for instrument_id 'SOL-USDT-SWAP'. Return the result as YAML using format 'yaml'."
+*   "Show me the last 3 funding rate settlements for ETH-USDT-SWAP using `get_funding_rate_history` with limit 3. Use the default JSON format."
+*   "Use `get_open_interest` to find the open interest for instrument_type 'FUTURES' and underlying 'BTC-USD'. Return the data using format 'csv'."
+*   "Invoke `get_open_interest` for instrument_id 'BTC-USDT-SWAP' with instrument_type 'SWAP'. Use the default JSON format."
 
 Claude will use the specified OKX tools to fulfill your requests. Remember that placing orders involves real financial risk.
 

@@ -40,6 +40,10 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+*.md
+*.markdown
+
+!README.md
 
 # Cursor editor metadata
 .cursor/
