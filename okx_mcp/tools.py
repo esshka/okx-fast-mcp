@@ -1,15 +1,13 @@
 # okx_mcp/tools.py
 import logging
-import csv
-import io
 import json
-import yaml # Added for YAML formatting
 from typing import Optional, Dict, Any, List, Union
 from fastmcp import FastMCP
 
 # Relative imports for client, services, and error
 from .client import OKXClient, OKXError, API_V5_PREFIX
 from . import services # Import the services module
+from .utils import format_data # Import format_data from utils
 
 logger = logging.getLogger(__name__)
 
@@ -27,94 +25,17 @@ except (ValueError, Exception) as e:
 # Instantiate FastMCP - use the name from the original server.py
 mcp = FastMCP("OKX API 🚀") # Or the actual name used previously
 
-# --- Helper for CSV Formatting (if needed, adapt from original) ---
-def _format_to_csv(data: List[Dict[str, Any]], fieldnames: List[str]) -> str:
-    """Formats a list of dictionaries into a CSV string."""
-    if not data:
-        return ""
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
-    writer.writeheader()
-    writer.writerows(data)
-    return output.getvalue()
-
-# --- Data Formatting Abstraction ---
-def format_data(data: Union[List[Dict[str, Any]], Dict[str, Any]], format_type: str, headers: Optional[List[str]] = None) -> Any:
-    """
-    Formats the given data into the specified format.
-
-    Args:
-        data: The data to format (list of dictionaries or a single dictionary).
-        format_type: The desired format ('json', 'csv', 'md', 'yaml').
-        headers: Optional list of headers (required for CSV/MD if data is list of dicts).
-
-    Returns:
-        The formatted data (string for text formats, original data for 'json').
-        Returns an error string if formatting fails or format is unsupported.
-    """
-    format_type = format_type.lower()
-    logger.debug(f"Formatting data to type: {format_type}")
-
-    if not data:
-        logger.warning("Formatting requested for empty data.")
-        if format_type == 'json':
-            return data # Return empty list/dict as is
-        else:
-            return "No data to format."
-
-    is_list = isinstance(data, list)
-
-    try:
-        if format_type == 'json':
-            # For JSON, return the raw Python object (list/dict)
-            # MCP handles JSON serialization automatically if needed
-            return data
-        elif format_type == 'csv':
-            if not is_list:
-                return "error: CSV format requires a list of dictionaries."
-            if not headers:
-                if data:
-                    headers = list(data[0].keys())
-                else:
-                    return "error: Cannot determine headers for empty CSV data."
-            return _format_to_csv(data, headers) # Use existing helper
-        elif format_type == 'yaml':
-            return yaml.dump(data, allow_unicode=True, sort_keys=False)
-        elif format_type == 'md': # Markdown Table
-            if not is_list:
-                return "error: Markdown table format requires a list of dictionaries."
-            if not data:
-                return "No data for Markdown table."
-
-            if not headers:
-                headers = list(data[0].keys())
-
-            # Create header row
-            header_line = "| " + " | ".join(headers) + " |"
-            separator_line = "| " + " | ".join(['---'] * len(headers)) + " |"
-
-            # Create data rows
-            data_lines = []
-            for row_dict in data:
-                row_values = [str(row_dict.get(h, '')) for h in headers]
-                data_lines.append("| " + " | ".join(row_values) + " |")
-
-            return "\n".join([header_line, separator_line] + data_lines)
-        else:
-            logger.error(f"Unsupported format type requested: {format_type}")
-            return f"error: Unsupported format type '{format_type}'. Supported formats: json, csv, md, yaml."
-
-    except Exception as e:
-        logger.exception(f"Error formatting data to {format_type}: {e}")
-        return f"error: Failed to format data as {format_type}: {e}"
-
-
 # --- MCP Tools ---
 
 @mcp.tool()
-def get_price(instrument: str) -> Dict[str, Any]:
-    """Get the latest market ticker price for a specific instrument (e.g., BTC-USDT-SWAP)."""
-    logger.info(f"Tool: Fetching price for instrument: {instrument}")
+def get_price(instrument: str, format: str = "json") -> Any:
+    """Get the latest market ticker price for a specific instrument (e.g., BTC-USDT-SWAP). Supports json and md formats."""
+    # Validate format
+    if format.lower() not in ["json", "md"]:
+        logger.warning(f"Tool: Unsupported format requested: {format}. Defaulting to json.")
+        format = "json"
+        
+    logger.info(f"Tool: Fetching price for instrument: {instrument}. Format: {format}")
     endpoint = f"{API_V5_PREFIX}/market/ticker"
     try:
         response_data = okx_client.make_request("GET", endpoint, params={"instId": instrument})
@@ -133,23 +54,53 @@ def get_price(instrument: str) -> Dict[str, Any]:
                 "timestamp_ms": ticker_data.get("ts"),
             }
             logger.info(f"Tool: Price for {instrument}: {result['last_price']}")
-            return result
+            return format_data(result, format)
         else:
             logger.warning(f"Tool: No price data returned for {instrument}")
-            return {"error": f"No data found for instrument {instrument}"}
+            error_msg = f"No data found for instrument {instrument}"
+            if format == "json":
+                return {"error": error_msg}
+            else:
+                return f"error: {error_msg}"
     except (ConnectionError, OKXError, ValueError) as e:
         logger.error(f"Tool: Error fetching price for {instrument}: {e}", exc_info=True)
-        return {"error": f"Failed to fetch price for {instrument}: {e}"}
+        if format == "json":
+            return {"error": f"Failed to fetch price for {instrument}: {e}"}
+        else:
+            return f"error: Failed to fetch price for {instrument}: {e}"
     except Exception as e:
         logger.exception(f"Tool: Unexpected error in get_price for {instrument}: {e}")
-        return {"error": f"An unexpected error occurred: {e}"}
+        if format == "json":
+            return {"error": f"An unexpected error occurred: {e}"}
+        else:
+            return f"error: An unexpected error occurred: {e}"
 
 
 @mcp.tool()
 def get_candlesticks(instrument: str, bar: str = "1m", limit: int = 100, format: str = "json") -> Any:
     """
-    Get candlestick (k-line) data for an instrument.
-    Returns data in the specified format (json, csv, md, yaml). Default is json.
+    Get candlestick (k-line) data for an OKX instrument and return it as formatted text.
+
+    Args:
+        instrument: The instrument ID (e.g., BTC-USDT, BTC-USDT-SWAP).
+        bar: Candlestick interval (e.g., 1m, 5m, 1H, 1D). Default is "1m".
+        limit: Number of candlesticks to retrieve (max typically 100). Default is 100.
+        format: Output format (json, csv, md, yaml). Default is "json".
+
+    Returns:
+        A formatted representation of candlestick data containing timestamp, open, high, low, close,
+        volume in contracts, and volume in USDT.
+        Returns empty data structure if no candlesticks found matching criteria.
+
+    Raises:
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+        ValueError: If the parameters are invalid or response format is unexpected.
+
+    Example:
+        >>> get_candlesticks("BTC-USDT", "15m", 50, "csv")
+        "timestamp_ms,open,high,low,close,volume_contracts,volume_usdt
+         1598918400000,11469.8,11470.9,11469.8,11470.9,2,0.17431"
     """
     logger.info(f"Tool: Fetching candlesticks for {instrument} (Bar: {bar}, Limit: {limit}, Format: {format})")
     endpoint = f"{API_V5_PREFIX}/market/candles"
@@ -179,9 +130,14 @@ def get_candlesticks(instrument: str, bar: str = "1m", limit: int = 100, format:
 
 
 @mcp.tool()
-def get_account_balance() -> Dict[str, Any]:
-    """Get account balance information (total equity, available balance per currency)."""
-    logger.info("Tool: Fetching account balance")
+def get_account_balance(format: str = "json") -> Any:
+    """Get account balance information (total equity, available balance per currency). Supports json and md formats."""
+    # Validate format
+    if format.lower() not in ["json", "md"]:
+        logger.warning(f"Tool: Unsupported format requested: {format}. Defaulting to json.")
+        format = "json"
+        
+    logger.info(f"Tool: Fetching account balance. Format: {format}")
     endpoint = f"{API_V5_PREFIX}/account/balance"
     try:
         # This requires authentication
@@ -192,23 +148,44 @@ def get_account_balance() -> Dict[str, Any]:
             account_info = response_data["data"][0] # Usually a list containing one account summary
             total_equity = account_info.get("totalEq")
             details = account_info.get("details", [])
-            balances = {item.get("ccy"): {"equity": item.get("eq"), "available": item.get("availEq")} for item in details}
-
+            
+            # Create a structured result dictionary
             result = {
                 "total_equity_usd": total_equity,
-                "currency_balances": balances
+                "currency_balances": {}
             }
+            
+            # Format the balances for better readability
+            for item in details:
+                ccy = item.get("ccy", "Unknown")
+                result["currency_balances"][ccy] = {
+                    "equity": item.get("eq"),
+                    "available": item.get("availEq"),
+                    "frozen": item.get("frozenBal", "0")
+                }
+            
             logger.info(f"Tool: Account balance fetched. Total Equity: {total_equity}")
-            return result
+            return format_data(result, format)
         else:
             logger.warning("Tool: No account balance data returned.")
-            return {"error": "No account balance data found."}
+            # Format the error message based on the requested format
+            error_msg = "No account balance data found."
+            if format == "json":
+                return {"error": error_msg}
+            else:
+                return f"error: {error_msg}"
     except (ConnectionError, OKXError, ValueError) as e:
         logger.error(f"Tool: Error fetching account balance: {e}", exc_info=True)
-        return {"error": f"Failed to fetch account balance: {e}"}
+        if format == "json":
+            return {"error": f"Failed to fetch account balance: {e}"}
+        else:
+            return f"error: Failed to fetch account balance: {e}"
     except Exception as e:
         logger.exception(f"Tool: Unexpected error in get_account_balance: {e}")
-        return {"error": f"An unexpected error occurred: {e}"}
+        if format == "json":
+            return {"error": f"An unexpected error occurred: {e}"}
+        else:
+            return f"error: An unexpected error occurred: {e}"
 
 
 @mcp.tool()
@@ -241,38 +218,54 @@ def get_positions(instrument_type: str = "SWAP", instrument_id: Optional[str] = 
 
 @mcp.tool()
 def get_trade_history(
-    instrument_type: str = "SWAP",
+    instrument_type: Optional[str] = None,
     instrument_id: Optional[str] = None,
-    order_type: Optional[str] = None, # market, limit, etc.
-    state: Optional[str] = None,      # filled
-    limit: int = 100
-) -> List[Dict[str, Any]]:
-     """Get recent trade (fill) history."""
-     logger.info(f"Tool: Fetching trade history - Type: {instrument_type}, ID: {instrument_id}, Limit: {limit}")
-     endpoint = f"{API_V5_PREFIX}/trade/fills-history" # Use fills-history for last 3 months
-     params: Dict[str, Any] = {"instType": instrument_type, "limit": str(limit)}
+    order_id: Optional[str] = None,
+    limit: int = 100,
+    format: str = "json"
+) -> Any:
+     """
+     Get recent trade (fill) history.
+     Returns data in the specified format (json, csv, md, yaml). Default is json.
+     """
+     logger.info(f"Tool: Fetching trade history - Type: {instrument_type}, ID: {instrument_id}, Limit: {limit}, Format: {format}")
+     endpoint = f"{API_V5_PREFIX}/trade/fills"
+     params: Dict[str, Any] = {"limit": str(limit)}
+     if instrument_type:
+         params["instType"] = instrument_type
      if instrument_id:
          params["instId"] = instrument_id
-     if order_type:
-         params["ordType"] = order_type
-     if state:
-          params["state"] = state # Note: This endpoint might not support 'state', check API docs. Fills are usually always 'filled'.
+     if order_id:
+         params["ordId"] = order_id
 
      try:
          response_data = okx_client.make_request("GET", endpoint, params=params, auth=True)
          if response_data and response_data.get("code") == "0":
              trades = response_data.get("data", [])
              logger.info(f"Tool: Fetched {len(trades)} trade history entries.")
-             return trades
+             
+             # Format the data using the abstraction
+             return format_data(trades, format)
          else:
              logger.warning(f"Tool: No trade history data returned or error in response: {response_data}")
-             return []
+             # Return appropriate format-based error message
+             error_msg = "No trade history found or API error occurred"
+             if format == "json":
+                 return {"error": error_msg}
+             else:
+                 return f"error: {error_msg}"
      except (ConnectionError, OKXError, ValueError) as e:
          logger.error(f"Tool: Error fetching trade history: {e}", exc_info=True)
-         return [{"error": f"Failed to fetch trade history: {e}"}]
+         if format == "json":
+             return [{"error": f"Failed to fetch trade history: {e}"}]
+         else:
+             return f"error: Failed to fetch trade history: {e}"
      except Exception as e:
          logger.exception(f"Tool: Unexpected error in get_trade_history: {e}")
-         return [{"error": f"An unexpected error occurred: {e}"}]
+         if format == "json":
+             return [{"error": f"An unexpected error occurred: {e}"}]
+         else:
+             return f"error: An unexpected error occurred: {e}"
 
 
 @mcp.tool()
@@ -281,12 +274,39 @@ def place_swap_limit_order(
     side: str, # buy, sell
     size_usdt: str, # Order size in USDT
     price: str,
-    position_side: Optional[str] = None, # long, short (for hedge mode)
-    client_order_id: Optional[str] = None,
-    tag: Optional[str] = None,
-    reduce_only: Optional[bool] = None
+    position_side: str, # long, short
 ) -> Dict[str, Any]:
-    """Place a limit order for SWAP trading, specifying size in USDT."""
+    """
+    Place a limit order for SWAP trading on OKX, specifying size in USDT.
+    
+    Args:
+        instrument: The instrument ID (e.g., BTC-USDT-SWAP). Must end with '-SWAP'.
+        side: Order side, must be either "buy" or "sell".
+        size_usdt: Order size in USDT (e.g., "100" for 100 USDT). Will be converted to contract quantity.
+        price: Limit price for the order (e.g., "30000" for $30,000).
+        position_side: Position side, must be either "long" or "short".
+        
+    Returns:
+        A dictionary containing order details including orderId, clientOrderId, and other relevant information.
+        Returns an error dictionary if the order placement fails.
+        
+    Raises:
+        OKXError: If the OKX API returns an error (includes error code and message).
+        ValueError: If parameters are invalid (e.g., instrument not ending with '-SWAP').
+        ConnectionError: If the API request fails.
+        
+    Example:
+        >>> place_swap_limit_order(
+        ...     instrument="BTC-USDT-SWAP",
+        ...     side="buy",
+        ...     size_usdt="100",
+        ...     price="30000",
+        ...     position_side="long"
+        ... )
+        {'ordId': '123456789', 'clOrdId': 'okx_123456789', 'tag': '', 'sCode': '0', 'sMsg': ''}
+    """
+    # Strip whitespace from instrument to prevent errors
+    instrument = instrument.strip()
     logger.info(f"Tool: Placing SWAP limit order - Inst: {instrument}, Side: {side}, Size(USDT): {size_usdt}, Px: {price}")
     if not instrument.endswith('-SWAP'):
         logger.error(f"Tool: Invalid instrument for SWAP order: {instrument}")
@@ -295,7 +315,7 @@ def place_swap_limit_order(
         # 1. Convert USDT size to contract size using the service
         contract_size_str = services._convert_usdt_to_contracts(okx_client, instrument, size_usdt)
         logger.info(f"Tool: Converted {size_usdt} USDT to {contract_size_str} contracts for {instrument}")
-
+        
         # 2. Place the order using the internal service function
         # Trade mode for SWAP is typically 'cross' or 'isolated' - assuming 'cross' if not specified
         # The service function handles the API call
@@ -307,14 +327,25 @@ def place_swap_limit_order(
             order_type="limit",
             size=contract_size_str, # Use the calculated contract size
             order_price=price,
-            position_side=position_side,
-            client_order_id=client_order_id,
-            tag=tag,
-            reduce_only=reduce_only
+            position_side=position_side
         )
-    except (ValueError, ConnectionError, OKXError) as e:
-        logger.error(f"Tool: Error placing SWAP limit order for {instrument}: {e}", exc_info=True)
+    except OKXError as e:
+        logger.error(f"Tool: OKX API Error placing SWAP limit order for {instrument}: {e}", exc_info=True)
+        # Return full raw error details for OKX API errors
+        return {
+            "error": f"Failed to place SWAP limit order: {e}",
+            "error_code": getattr(e, "code", None),
+            "error_message": getattr(e, "message", str(e)),
+            "error_data": getattr(e, "data", None),
+            "error_raw": str(e),
+            "error_type": "OKXError"
+        }
+    except ValueError as e:
+        logger.error(f"Tool: Value Error placing SWAP limit order for {instrument}: {e}", exc_info=True)
         return {"error": f"Failed to place SWAP limit order: {e}"}
+    except ConnectionError as e:
+        logger.error(f"Tool: Connection Error placing SWAP limit order for {instrument}: {e}", exc_info=True)
+        return {"error": f"Failed to connect to OKX API: {e}"}
     except Exception as e:
         logger.exception(f"Tool: Unexpected error in place_swap_limit_order for {instrument}: {e}")
         return {"error": f"An unexpected error occurred: {e}"}
@@ -325,11 +356,7 @@ def place_spot_limit_order(
     instrument: str,
     side: str, # buy, sell
     size: str, # Order size in base currency (e.g., BTC amount for BTC-USDT)
-    price: str,
-    trade_mode: str = "cash", # Usually 'cash' for SPOT
-    client_order_id: Optional[str] = None,
-    tag: Optional[str] = None
-    # reduce_only typically not applicable to SPOT
+    price: str
 ) -> Dict[str, Any]:
     """Place a limit order for SPOT trading."""
     logger.info(f"Tool: Placing SPOT limit order - Inst: {instrument}, Side: {side}, Size: {size}, Px: {price}")
@@ -346,15 +373,11 @@ def place_spot_limit_order(
         return services._place_order_internal(
             client=okx_client,
             instrument=instrument,
-            trade_mode=trade_mode, # Should be 'cash' for spot
+            trade_mode="cash",
             side=side,
             order_type="limit",
-            size=corrected_size, # Use validated/corrected size
-            order_price=price,
-            # position_side not applicable for SPOT
-            client_order_id=client_order_id,
-            tag=tag
-            # reduce_only not applicable
+            size=corrected_size,
+            order_price=price
         )
     except (ValueError, ConnectionError, OKXError) as e:
          logger.error(f"Tool: Error placing SPOT limit order for {instrument}: {e}", exc_info=True)
@@ -425,7 +448,51 @@ def place_spot_grid_algo_order(
     tag: Optional[str] = None,
     client_order_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Place a spot grid algo order."""
+    """
+    Place a spot grid algo order on OKX.
+    
+    A grid trading strategy divides the price range into several price levels and 
+    automatically buys at lower levels and sells at higher levels.
+    
+    Args:
+        instrument_id: Instrument ID (e.g., "BTC-USDT").
+        max_price: Upper price of the grid range.
+        min_price: Lower price of the grid range.
+        grid_num: Number of grids (integer as string).
+        grid_run_type: Grid type: "1" (Arithmetic), "2" (Geometric). Default is "1".
+        investment_amount: Investment amount in quote currency (e.g., USDT).
+            Required if base_order_size is not set.
+        base_order_size: Investment amount in base currency (e.g., BTC).
+            Required if investment_amount is not set.
+        tp_trigger_px: Take-profit trigger price.
+        sl_trigger_px: Stop-loss trigger price.
+        tag: Order tag for tracking.
+        client_order_id: Client-supplied Algo ID (max 32 chars).
+    
+    Returns:
+        A dictionary containing order details including algoId and client-supplied algoId.
+        Example: {"algoId": "448965992920907776", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
+        
+        If an error occurs, returns a dictionary with error information:
+        Example: {"error": "Failed to place SPOT Grid Algo order: Invalid parameters"}
+    
+    Raises:
+        ValueError: If neither investment_amount nor base_order_size is provided,
+                   or if both are provided, or if parameters are otherwise invalid.
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+    
+    Example:
+        >>> place_spot_grid_algo_order(
+        ...     instrument_id="BTC-USDT",
+        ...     max_price="35000",
+        ...     min_price="25000",
+        ...     grid_num="10",
+        ...     investment_amount="1000",
+        ...     tp_trigger_px="40000"
+        ... )
+        {"algoId": "448965992920907776", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
+    """
     logger.info(f"Tool: Placing SPOT Grid Algo order for {instrument_id}")
     if investment_amount is None and base_order_size is None:
          return {"error": "Either investment_amount (quote ccy) or base_order_size (base ccy) must be provided."}
@@ -573,7 +640,51 @@ def place_contract_grid_algo_order(
     tag: Optional[str] = None,
     client_order_id: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Place a contract grid algo order (for SWAP/FUTURES)."""
+    """
+    Place a contract grid algo order on OKX (for SWAP/FUTURES).
+    
+    A contract grid trading strategy divides the price range into several price levels and
+    automatically executes trades at predefined price points within the SWAP/FUTURES markets.
+    
+    Args:
+        instrument_id: Instrument ID (e.g., "BTC-USDT-SWAP"). Must end with '-SWAP' or '-FUTURES'.
+        max_price: Upper price of the grid range.
+        min_price: Lower price of the grid range.
+        grid_num: Number of grids (integer as string).
+        grid_run_type: Grid type: "1" (Arithmetic), "2" (Geometric). Default is "1".
+        investment_amount: Investment amount in quote currency (e.g., USDT).
+            Required if contract_order_size is not set.
+        contract_order_size: Size per grid order in contracts.
+            Required if investment_amount is not set.
+        tp_trigger_px: Take-profit trigger price.
+        sl_trigger_px: Stop-loss trigger price.
+        tag: Order tag for tracking.
+        client_order_id: Client-supplied Algo ID (max 32 chars).
+    
+    Returns:
+        A dictionary containing order details including algoId and client-supplied algoId.
+        Example: {"algoId": "448965992920907776", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
+        
+        If an error occurs, returns a dictionary with error information:
+        Example: {"error": "Failed to place Contract Grid Algo order: Invalid instrument"}
+    
+    Raises:
+        ValueError: If neither investment_amount nor contract_order_size is provided,
+                   or if both are provided, or if instrument_id doesn't end with '-SWAP' or '-FUTURES'.
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+    
+    Example:
+        >>> place_contract_grid_algo_order(
+        ...     instrument_id="BTC-USDT-SWAP",
+        ...     max_price="35000",
+        ...     min_price="25000",
+        ...     grid_num="10",
+        ...     investment_amount="1000",
+        ...     tp_trigger_px="40000"
+        ... )
+        {"algoId": "448965992920907777", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
+    """
     logger.info(f"Tool: Placing Contract Grid Algo order for {instrument_id}")
     if investment_amount is None and contract_order_size is None:
          return {"error": "Either investment_amount (quote ccy) or contract_order_size (contracts) must be provided."}

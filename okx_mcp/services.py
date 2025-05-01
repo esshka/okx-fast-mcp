@@ -37,6 +37,8 @@ def get_instruments(client: OKXClient, instrument_type: str, instrument_id: Opti
 # - This function should now primarily call client.get_instrument_details_cached
 def get_instrument_details(client: OKXClient, instrument_id: str, instrument_type: str = 'SWAP') -> Optional[List[float]]:
     """Service layer function to get instrument details, utilizing the client's cache."""
+    # Strip whitespace from instrument_id to prevent errors
+    instrument_id = instrument_id.strip()
     logger.debug(f"Service: Requesting cached details for {instrument_id} ({instrument_type})")
     # Directly call the client's cached method
     details = client.get_instrument_details_cached(instrument_id, instrument_type)
@@ -50,6 +52,8 @@ def get_instrument_details(client: OKXClient, instrument_id: str, instrument_typ
 # - Call the service function get_instrument_details(client, ...)
 def calculate_contract_size(client: OKXClient, instrument_id: str, usdt_size: float) -> Optional[float]:
     """Calculates the number of contracts based on USDT size."""
+    # Strip whitespace from instrument_id to prevent errors
+    instrument_id = instrument_id.strip()
     logger.debug(f"Service: Calculating contract size for {instrument_id}, USDT: {usdt_size}")
     # Use the service layer function which uses the client cache
     details = get_instrument_details(client, instrument_id, 'SWAP') # Assuming SWAP for this calc
@@ -130,6 +134,9 @@ def validate_and_correct_order_size(client: OKXClient, instrument_id: str, size:
 # - Ensure Decimal is imported if used
 def _convert_usdt_to_contracts(client: OKXClient, instrument: str, usdt_size_str: str) -> str:
     """Converts USDT amount to contract size string, respecting instrument precision."""
+    # Strip whitespace from parameters to prevent errors
+    instrument = instrument.strip()
+    usdt_size_str = usdt_size_str.strip()
     logger.debug(f"Service: Converting USDT '{usdt_size_str}' to contracts for {instrument}")
     try:
         usdt_size = float(usdt_size_str)

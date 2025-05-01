@@ -42,6 +42,13 @@ class OKXClient:
         self.api_key = os.environ.get("OKX_API_KEY")
         self.secret_key = os.environ.get("OKX_SECRET_KEY")
         self.passphrase = os.environ.get("OKX_PASSPHRASE")
+        
+        # Check if demo/simulated trading is enabled
+        self.use_demo = os.environ.get("OKX_USE_DEMO", "").lower() in ["true", "1", "yes"]
+        if self.use_demo:
+            logger.info("Demo/simulated trading mode is ENABLED")
+        else:
+            logger.info("Live trading mode is enabled")
 
         self.has_private_access = bool(self.api_key and self.secret_key and self.passphrase)
 
@@ -128,7 +135,7 @@ class OKXClient:
             "OK-ACCESS-SIGN": signature,
             "OK-ACCESS-TIMESTAMP": timestamp,
             "OK-ACCESS-PASSPHRASE": self.passphrase,
-            "x-simulated-trading": "0"  # Use "1" for demo/paper trading
+            "x-simulated-trading": "1" if self.use_demo else "0"  # Use "1" for demo/paper trading
         }
         headers.update(auth_headers)
 
