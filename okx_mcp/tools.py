@@ -483,13 +483,11 @@ def place_spot_grid_algo_order(
     max_price: str,
     min_price: str,
     grid_num: str,
-    grid_run_type: str = "1", # 1: Arithmetic, 2: Geometric
-    investment_amount: Optional[str] = None, # Total investment in quote ccy (e.g., USDT)
-    base_order_size: Optional[str] = None, # Size per grid order in base ccy (e.g., BTC) - use one of investment or base size
+    grid_run_type: str = "1",
+    investment_amount: Optional[str] = None,
+    base_order_size: Optional[str] = None, 
     tp_trigger_px: Optional[str] = None,
-    sl_trigger_px: Optional[str] = None,
-    tag: Optional[str] = None,
-    client_order_id: Optional[str] = None
+    sl_trigger_px: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Place a spot grid algo order on OKX.
@@ -509,8 +507,6 @@ def place_spot_grid_algo_order(
             Required if investment_amount is not set.
         tp_trigger_px: Take-profit trigger price.
         sl_trigger_px: Stop-loss trigger price.
-        tag: Order tag for tracking.
-        client_order_id: Client-supplied Algo ID (max 32 chars).
     
     Returns:
         A dictionary containing order details including algoId and client-supplied algoId.
@@ -560,10 +556,6 @@ def place_spot_grid_algo_order(
         data["tpTriggerPx"] = tp_trigger_px
     if sl_trigger_px:
         data["slTriggerPx"] = sl_trigger_px
-    if tag:
-        data["tag"] = tag
-    if client_order_id:
-         data["algoClOrdId"] = client_order_id # Use algoClOrdId for client ID
 
     try:
         # Call the service function
@@ -577,56 +569,88 @@ def place_spot_grid_algo_order(
 
 @mcp.tool()
 def get_grid_algo_order_list(
-    algo_order_type: str, # grid, iceberg, twap, etc.
+    algo_order_type: str, # grid, contract_grid, etc.
     instrument_type: str = "SPOT", # SPOT, SWAP, FUTURES, OPTION
     instrument_id: Optional[str] = None,
-    state: Optional[str] = None, # effective, paused, stopping
     algo_id: Optional[str] = None,
+    state: Optional[str] = None, # effective, paused, stopping
+    after: Optional[str] = None, # pagination cursor
+    before: Optional[str] = None, # pagination cursor
     limit: int = 100,
-    format: str = "json" # Added format parameter
-) -> Any: # Returns JSON by default, or formatted string
-     """Get a list of pending or historical grid algo orders. Supports json, csv, md, yaml formats."""
-     logger.info(f"Tool: Fetching Grid Algo list - Type: {algo_order_type}, InstType: {instrument_type}, Format: {format}")
-     # Determine endpoint based on state (pending vs history) - assuming pending for now
-     endpoint = f"{API_V5_PREFIX}/tradingBot/grid/orders-algo-pending"
-     # TODO: Add logic to switch to /tradingBot/grid/orders-algo-history based on state or a dedicated parameter
+    format: str = "json" # json, csv, md, yaml
+) -> Any:
+    """
+    Get a list of pending grid algo orders and return it as formatted text (requires authentication).
 
-     params: Dict[str, Any] = {
-         "algoOrdType": algo_order_type,
-         "instType": instrument_type,
-         "limit": str(limit)
-     }
-     if instrument_id: params["instId"] = instrument_id
-     if state: params["state"] = state # Check API docs if 'state' is valid for pending endpoint
-     if algo_id: params["algoId"] = algo_id
+    Args:
+        algo_order_type: Algo order type: "grid" (spot) or "contract_grid" (contract).
+        instrument_type: Filter by Instrument type: "SPOT", "MARGIN", "FUTURES", "SWAP". Default is "SPOT".
+        instrument_id: Filter by Instrument ID (e.g., "BTC-USDT"). Optional.
+        algo_id: Filter by Algo ID. Optional.
+        state: Filter by state: "starting", "running", "stopping", "pending_signal", "no_close_position". Optional.
+        after: Pagination: Return records earlier than the requested algoId. Optional.
+        before: Pagination: Return records newer than the requested algoId. Optional.
+        limit: Number of results per request (max 100, default 100). Optional.
+        format: Output format (json, csv, md, yaml). Default is "json".
 
-     try:
-         response_data = okx_client.make_request("GET", endpoint, params=params, auth=True)
-         if response_data and response_data.get("code") == "0":
-             orders = response_data.get("data", [])
-             logger.info(f"Tool: Fetched {len(orders)} grid algo orders.")
-             # Format the data using the abstraction
-             return format_data(orders, format)
-         else:
-             logger.warning(f"Tool: No grid algo list data or error: {response_data}")
-             # Return appropriate empty/error based on format
-             msg = f"No grid algo orders found or API error occurred: {response_data.get('msg', 'Unknown')}"
-             if format == "json":
-                 return {"error": msg}
-             else:
-                 return f"error: {msg}"
-     except (ConnectionError, OKXError, ValueError) as e:
-         logger.error(f"Tool: Error fetching grid algo list: {e}", exc_info=True)
-         if format == "json":
-             return {"error": f"Failed to fetch grid algo list: {e}"}
-         else:
-             return f"error: Failed to fetch grid algo list: {e}"
-     except Exception as e:
-         logger.exception(f"Tool: Unexpected error in get_grid_algo_order_list: {e}")
-         if format == "json":
-             return {"error": f"An unexpected error occurred: {e}"}
-         else:
-             return f"error: An unexpected error occurred: {e}"
+    Returns:
+        A formatted representation of pending grid algo orders containing details like:
+        algoId, clientAlgoId, instrument, state, maxPrice, minPrice, gridNum, etc.
+        Returns appropriate empty/error structure if no orders found or an error occurs.
+
+    Raises:
+        ValueError: If parameters are invalid.
+        PermissionError: If authentication fails.
+        ConnectionError: If API request fails.
+        OKXError: If OKX API returns an error.
+
+    Example:
+        >>> get_grid_algo_order_list("grid", instrument_type="SPOT", format="csv")
+        "AlgoID,ClientAlgoID,Instrument,InstType,AlgoType,State,MaxPrice,MinPrice,GridNum,RunType,..."
+    """
+    logger.info(f"Tool: Fetching Grid Algo list - Type: {algo_order_type}, InstType: {instrument_type}, Format: {format}")
+    # Determine endpoint based on state (pending vs history) - assuming pending for now
+    endpoint = f"{API_V5_PREFIX}/tradingBot/grid/orders-algo-pending"
+    # TODO: Add logic to switch to /tradingBot/grid/orders-algo-history based on state or a dedicated parameter
+
+    params: Dict[str, Any] = {
+        "algoOrdType": algo_order_type,
+        "instType": instrument_type,
+        "limit": str(limit)
+    }
+    if instrument_id: params["instId"] = instrument_id
+    if state: params["state"] = state # Check API docs if 'state' is valid for pending endpoint
+    if algo_id: params["algoId"] = algo_id
+    if after: params["after"] = after
+    if before: params["before"] = before
+
+    try:
+        response_data = okx_client.make_request("GET", endpoint, params=params, auth=True)
+        if response_data and response_data.get("code") == "0":
+            orders = response_data.get("data", [])
+            logger.info(f"Tool: Fetched {len(orders)} grid algo orders.")
+            # Format the data using the abstraction
+            return format_data(orders, format)
+        else:
+            logger.warning(f"Tool: No grid algo list data or error: {response_data}")
+            # Return appropriate empty/error based on format
+            msg = f"No grid algo orders found or API error occurred: {response_data.get('msg', 'Unknown')}"
+            if format == "json":
+                return {"error": msg}
+            else:
+                return f"error: {msg}"
+    except (ConnectionError, OKXError, ValueError) as e:
+        logger.error(f"Tool: Error fetching grid algo list: {e}", exc_info=True)
+        if format == "json":
+            return {"error": f"Failed to fetch grid algo list: {e}"}
+        else:
+            return f"error: Failed to fetch grid algo list: {e}"
+    except Exception as e:
+        logger.exception(f"Tool: Unexpected error in get_grid_algo_order_list: {e}")
+        if format == "json":
+            return {"error": f"An unexpected error occurred: {e}"}
+        else:
+            return f"error: An unexpected error occurred: {e}"
 
 
 @mcp.tool()
@@ -665,9 +689,6 @@ def get_funding_rate(instrument_id: str, format: str = "json") -> Any: # Returns
         else:
             return f"error: An unexpected error occurred: {e}"
 
-# --- Add other Grid Algo tools similarly (place_contract_grid, amend, stop, get_details) ---
-# Note: place_contract_grid, amend, stop, get_details were not explicitly listed in the original server.py content provided,
-# but the instructions mention adding them "similarly". I will add placeholders for these based on the structure.
 
 @mcp.tool()
 def place_contract_grid_algo_order(
@@ -675,13 +696,11 @@ def place_contract_grid_algo_order(
     max_price: str,
     min_price: str,
     grid_num: str,
-    grid_run_type: str = "1", # 1: Arithmetic, 2: Geometric
-    investment_amount: Optional[str] = None, # Total investment in quote ccy (e.g., USDT)
-    contract_order_size: Optional[str] = None, # Size per grid order in contracts - use one of investment or contract size
+    grid_run_type: str = "1", 
+    investment_amount: Optional[str] = None, 
+    contract_order_size: Optional[str] = None, 
     tp_trigger_px: Optional[str] = None,
-    sl_trigger_px: Optional[str] = None,
-    tag: Optional[str] = None,
-    client_order_id: Optional[str] = None
+    sl_trigger_px: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Place a contract grid algo order on OKX (for SWAP/FUTURES).
@@ -701,8 +720,6 @@ def place_contract_grid_algo_order(
             Required if investment_amount is not set.
         tp_trigger_px: Take-profit trigger price.
         sl_trigger_px: Stop-loss trigger price.
-        tag: Order tag for tracking.
-        client_order_id: Client-supplied Algo ID (max 32 chars).
     
     Returns:
         A dictionary containing order details including algoId and client-supplied algoId.
@@ -744,20 +761,16 @@ def place_contract_grid_algo_order(
         "minPx": min_price,
         "gridNum": grid_num,
         "runType": grid_run_type,
-        "instType": "SWAP" if instrument_id.endswith('-SWAP') else "FUTURES", # Determine instrument type
+        "instType": "SWAP" if instrument_id.endswith('-SWAP') else "FUTURES", 
     }
     if investment_amount:
-        data["quoteSz"] = investment_amount # Use quoteSz for investment amount
+        data["quoteSz"] = investment_amount 
     if contract_order_size:
          data["baseSz"] = contract_order_size # Use baseSz for size per grid (contracts)
     if tp_trigger_px:
         data["tpTriggerPx"] = tp_trigger_px
     if sl_trigger_px:
         data["slTriggerPx"] = sl_trigger_px
-    if tag:
-        data["tag"] = tag
-    if client_order_id:
-         data["algoClOrdId"] = client_order_id # Use algoClOrdId for client ID
 
     try:
         # Call the service function
@@ -777,12 +790,50 @@ def amend_grid_algo_order(
     min_price: Optional[str] = None,
     tp_trigger_px: Optional[str] = None,
     sl_trigger_px: Optional[str] = None,
-    new_client_order_id: Optional[str] = None
+    tp_ratio: Optional[str] = None,
+    sl_ratio: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Amend a pending grid algo order."""
+    """
+    Amend an existing grid algo order on OKX (requires authentication).
+    
+    Allows modifying parameters of a running grid algo order such as take-profit price,
+    stop-loss price, or adding a new client order ID.
+    
+    Args:
+        algo_id: The Algo ID of the order to amend.
+        instrument_id: Instrument ID associated with the order (e.g., "BTC-USDT", "BTC-USDT-SWAP").
+        max_price: New upper price of the grid range. Optional.
+        min_price: New lower price of the grid range. Optional.
+        tp_trigger_px: New take-profit trigger price. Set to "" to cancel existing take-profit. Optional.
+        sl_trigger_px: New stop-loss trigger price. Set to "" to cancel existing stop-loss. Optional.
+        tp_ratio: New take-profit ratio for contract grid orders (e.g., "0.1" for 10%). Set to "" to cancel. Optional.
+        sl_ratio: New stop-loss ratio for contract grid orders (e.g., "0.1" for 10%). Set to "" to cancel. Optional.
+    
+    Returns:
+        A dictionary containing the amended order details.
+        Example: {"algoId": "448965992920907776", "sCode": "0", "sMsg": ""}
+        
+        If an error occurs, returns a dictionary with error information:
+        Example: {"error": "Failed to amend grid algo order: Invalid parameters"}
+    
+    Raises:
+        ValueError: If no amendable parameters are provided or parameters are invalid.
+        PermissionError: If authentication fails.
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+    
+    Example:
+        >>> amend_grid_algo_order(
+        ...     algo_id="448965992920907776",
+        ...     instrument_id="BTC-USDT-SWAP",
+        ...     sl_trigger_px="29000",
+        ...     tp_trigger_px="35000"
+        ... )
+        {"algoId": "448965992920907776", "sCode": "0", "sMsg": ""}
+    """
     logger.info(f"Tool: Amending Grid Algo order {algo_id} for {instrument_id}")
-    if not any([max_price, min_price, tp_trigger_px, sl_trigger_px, new_client_order_id]):
-        return {"error": "At least one parameter (max_price, min_price, tp_trigger_px, sl_trigger_px, new_client_order_id) must be provided to amend."}
+    if not any([max_price, min_price, tp_trigger_px, sl_trigger_px, tp_ratio, sl_ratio, new_client_order_id]):
+        return {"error": "At least one parameter (max_price, min_price, tp_trigger_px, sl_trigger_px, tp_ratio, sl_ratio, new_client_order_id) must be provided to amend."}
 
     data: Dict[str, Any] = {
         "algoId": algo_id,
@@ -792,7 +843,8 @@ def amend_grid_algo_order(
     if min_price: data["minPx"] = min_price
     if tp_trigger_px: data["tpTriggerPx"] = tp_trigger_px
     if sl_trigger_px: data["slTriggerPx"] = sl_trigger_px
-    if new_client_order_id: data["newAlgoClOrdId"] = new_client_order_id
+    if tp_ratio: data["tpRatio"] = tp_ratio
+    if sl_ratio: data["slRatio"] = sl_ratio
 
     try:
         endpoint = f"{API_V5_PREFIX}/tradingBot/grid/amend-order-algo"
