@@ -896,9 +896,50 @@ def stop_grid_algo_order(
 @mcp.tool()
 def get_grid_algo_order_details(
     algo_id: str,
-    algo_order_type: str # grid, iceberg, twap, etc.
+    algo_order_type: str # grid, contract_grid
 ) -> Dict[str, Any]:
-    """Get details of a specific grid algo order."""
+    """
+    Get detailed information for a specific grid algo order (requires authentication).
+    
+    Retrieves comprehensive details about a grid algo order including its configuration,
+    current performance metrics, and status information.
+    
+    Args:
+        algo_id: The Algo ID of the order to retrieve details for.
+        algo_order_type: Algo order type: "grid" (spot) or "contract_grid" (contract).
+    
+    Returns:
+        A dictionary containing detailed information about the specified grid algo order including:
+        - Basic order information (algoId, instId, cTime, uTime, state)
+        - Configuration parameters (maxPx, minPx, gridNum, runType, etc.)
+        - Performance metrics (totalPnl, gridProfit, floatProfit, arbitrageNum, etc.)
+        - Instrument-specific details (for Spot or Contract)
+        - Current status indicators
+        
+        If an error occurs, returns a dictionary with error information:
+        Example: {"error": "Failed to retrieve grid algo details: Order not found"}
+    
+    Raises:
+        ValueError: If parameters are invalid or the order is not found.
+        PermissionError: If authentication fails.
+        ConnectionError: If API request fails.
+        OKXError: If OKX API returns an error.
+    
+    Example:
+        >>> get_grid_algo_order_details("448965992920907776", "grid")
+        {
+            "algoId": "448965992920907776",
+            "instId": "BTC-USDT",
+            "state": "running",
+            "maxPx": "35000",
+            "minPx": "25000",
+            "gridNum": "10",
+            "totalPnl": "12.5",
+            "gridProfit": "10.2",
+            "floatProfit": "2.3",
+            ...
+        }
+    """
     logger.info(f"Tool: Fetching details for Grid Algo order {algo_id} (Type: {algo_order_type})")
 
     endpoint = f"{API_V5_PREFIX}/tradingBot/grid/orders-algo-details"
