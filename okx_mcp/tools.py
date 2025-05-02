@@ -28,17 +28,56 @@ mcp = FastMCP("OKX API 🚀") # Or the actual name used previously
 # --- MCP Tools ---
 
 @mcp.tool()
-def get_price(instrument: str, format: str = "json") -> Any:
-    """Get the latest market ticker price for a specific instrument (e.g., BTC-USDT-SWAP). Supports json and md formats."""
+def get_price(instrument_id: str, format: str = "json") -> Any:
+    """
+    Get the latest market ticker price for a specific instrument.
+    
+    Args:
+        instrument_id: The instrument ID (e.g., "BTC-USDT-SWAP", "ETH-USDT").
+        format: Output format ("json" or "md"). Default is "json".
+    
+    Returns:
+        A formatted representation of the ticker data containing:
+        - instrument: The instrument ID
+        - last_price: The latest traded price
+        - bid_price: Best bid price
+        - ask_price: Best ask price
+        - 24h_high: 24-hour high price
+        - 24h_low: 24-hour low price
+        - 24h_volume_contracts: 24-hour volume in contracts/base currency
+        - 24h_volume_usdt: 24-hour volume in quote currency (USDT for linear)
+        - timestamp_ms: Timestamp in milliseconds
+        
+        Returns error information if the request fails or no data is found.
+    
+    Raises:
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+        ValueError: If the parameters are invalid.
+    
+    Example:
+        >>> get_price("BTC-USDT-SWAP", "json")
+        {
+            "instrument": "BTC-USDT-SWAP",
+            "last_price": "30123.4",
+            "bid_price": "30122.1",
+            "ask_price": "30124.5",
+            "24h_high": "30500.0",
+            "24h_low": "29800.5",
+            "24h_volume_contracts": "1234.56",
+            "24h_volume_usdt": "37150000.32",
+            "timestamp_ms": "1621500800000"
+        }
+    """
     # Validate format
     if format.lower() not in ["json", "md"]:
         logger.warning(f"Tool: Unsupported format requested: {format}. Defaulting to json.")
         format = "json"
         
-    logger.info(f"Tool: Fetching price for instrument: {instrument}. Format: {format}")
+    logger.info(f"Tool: Fetching price for instrument: {instrument_id}. Format: {format}")
     endpoint = f"{API_V5_PREFIX}/market/ticker"
     try:
-        response_data = okx_client.make_request("GET", endpoint, params={"instId": instrument})
+        response_data = okx_client.make_request("GET", endpoint, params={"instId": instrument_id})
         if response_data and response_data.get("data"):
             ticker_data = response_data["data"][0]
             # Select relevant fields
@@ -53,23 +92,23 @@ def get_price(instrument: str, format: str = "json") -> Any:
                 "24h_volume_usdt": ticker_data.get("volCcy24h"), # Volume in quote currency (USDT for linear)
                 "timestamp_ms": ticker_data.get("ts"),
             }
-            logger.info(f"Tool: Price for {instrument}: {result['last_price']}")
+            logger.info(f"Tool: Price for {instrument_id}: {result['last_price']}")
             return format_data(result, format)
         else:
-            logger.warning(f"Tool: No price data returned for {instrument}")
-            error_msg = f"No data found for instrument {instrument}"
+            logger.warning(f"Tool: No price data returned for {instrument_id}")
+            error_msg = f"No data found for instrument {instrument_id}"
             if format == "json":
                 return {"error": error_msg}
             else:
                 return f"error: {error_msg}"
     except (ConnectionError, OKXError, ValueError) as e:
-        logger.error(f"Tool: Error fetching price for {instrument}: {e}", exc_info=True)
+        logger.error(f"Tool: Error fetching price for {instrument_id}: {e}", exc_info=True)
         if format == "json":
-            return {"error": f"Failed to fetch price for {instrument}: {e}"}
+            return {"error": f"Failed to fetch price for {instrument_id}: {e}"}
         else:
-            return f"error: Failed to fetch price for {instrument}: {e}"
+            return f"error: Failed to fetch price for {instrument_id}: {e}"
     except Exception as e:
-        logger.exception(f"Tool: Unexpected error in get_price for {instrument}: {e}")
+        logger.exception(f"Tool: Unexpected error in get_price for {instrument_id}: {e}")
         if format == "json":
             return {"error": f"An unexpected error occurred: {e}"}
         else:
@@ -832,8 +871,8 @@ def amend_grid_algo_order(
         {"algoId": "448965992920907776", "sCode": "0", "sMsg": ""}
     """
     logger.info(f"Tool: Amending Grid Algo order {algo_id} for {instrument_id}")
-    if not any([max_price, min_price, tp_trigger_px, sl_trigger_px, tp_ratio, sl_ratio, new_client_order_id]):
-        return {"error": "At least one parameter (max_price, min_price, tp_trigger_px, sl_trigger_px, tp_ratio, sl_ratio, new_client_order_id) must be provided to amend."}
+    if not any([max_price, min_price, tp_trigger_px, sl_trigger_px, tp_ratio, sl_ratio]):
+        return {"error": "At least one parameter (max_price, min_price, tp_trigger_px, sl_trigger_px, tp_ratio, sl_ratio) must be provided to amend."}
 
     data: Dict[str, Any] = {
         "algoId": algo_id,
@@ -868,7 +907,37 @@ def stop_grid_algo_order(
     instrument_id: str,
     stop_type: str = "1" # 1: Cancel all pending orders and close position, 2: Cancel all pending orders and keep position
 ) -> Dict[str, Any]:
-    """Stop a pending grid algo order."""
+    """
+    Stop a pending grid algo order on OKX (requires authentication).
+    
+    Args:
+        algo_id: The Algo ID of the grid order to stop.
+        instrument_id: Instrument ID associated with the order (e.g., "BTC-USDT", "BTC-USDT-SWAP").
+        stop_type: Stop type, options:
+            - "1": Cancel all pending orders and close position (default)
+            - "2": Cancel all pending orders and keep position
+    
+    Returns:
+        A dictionary containing the response data with operation status.
+        Example: {"algoId": "448965992920907776", "sCode": "0", "sMsg": ""}
+        
+        If an error occurs, returns a dictionary with error information:
+        Example: {"error": "Failed to stop grid algo order: Invalid parameters"}
+    
+    Raises:
+        ValueError: If parameters are invalid.
+        PermissionError: If authentication fails.
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+    
+    Example:
+        >>> stop_grid_algo_order(
+        ...     algo_id="448965992920907776",
+        ...     instrument_id="BTC-USDT-SWAP",
+        ...     stop_type="1"
+        ... )
+        {"algoId": "448965992920907776", "sCode": "0", "sMsg": ""}
+    """
     logger.info(f"Tool: Stopping Grid Algo order {algo_id} for {instrument_id} with stop type {stop_type}")
 
     data: Dict[str, Any] = {
@@ -1034,6 +1103,94 @@ def get_open_interest(instrument_type: str, underlying: Optional[str] = None, in
             return f"error: Failed to fetch open interest: {e}"
     except Exception as e:
         logger.exception(f"Tool: Unexpected error in get_open_interest: {e}")
+        if format == "json":
+            return {"error": f"An unexpected error occurred: {e}"}
+        else:
+            return f"error: An unexpected error occurred: {e}"
+
+@mcp.tool()
+def get_order_book(instrument_id: str, depth: int = 1, format: str = "json") -> Any:
+    """
+    Retrieve order book data for a specific instrument.
+    
+    Args:
+        instrument_id: The instrument ID (e.g., "BTC-USDT", "ETH-USDT-SWAP").
+        depth: Order book depth per side. Maximum 400. Default is 1.
+        format: Output format ("json", "md", "csv", "yaml"). Default is "json".
+    
+    Returns:
+        A formatted representation of the order book data containing:
+        - asks: Array of sell orders [price, quantity, deprecated_value, order_count]
+        - bids: Array of buy orders [price, quantity, deprecated_value, order_count]
+        - ts: Timestamp in milliseconds
+        
+        Returns error information if the request fails or no data is found.
+    
+    Raises:
+        ConnectionError: If the API request fails.
+        OKXError: If the OKX API returns an error.
+        ValueError: If the parameters are invalid.
+    
+    Example:
+        >>> get_order_book("BTC-USDT", 5, "json")
+        {
+            "asks": [
+                ["41006.8", "0.60038921", "0", "1"],
+                ["41007.9", "0.25621872", "0", "2"],
+                ...
+            ],
+            "bids": [
+                ["41006.3", "0.30178218", "0", "2"],
+                ["41005.2", "0.15236519", "0", "1"],
+                ...
+            ],
+            "ts": "1629966436396"
+        }
+    """
+    # Validate parameters
+    if depth < 1 or depth > 400:
+        logger.warning(f"Tool: Invalid depth {depth}. Must be between 1 and 400. Defaulting to 1.")
+        depth = 1
+        
+    logger.info(f"Tool: Fetching order book for instrument: {instrument_id}, depth: {depth}. Format: {format}")
+    endpoint = f"{API_V5_PREFIX}/market/books"
+    params = {
+        "instId": instrument_id,
+        "sz": str(depth)
+    }
+    
+    try:
+        response_data = okx_client.make_request("GET", endpoint, params=params)
+        if response_data and response_data.get("data"):
+            # Extract order book data
+            book_data = response_data["data"][0]
+            result = {
+                "asks": book_data.get("asks", []),
+                "bids": book_data.get("bids", []),
+                "ts": book_data.get("ts")
+            }
+            
+            # Log summary of the order book
+            ask_count = len(result["asks"])
+            bid_count = len(result["bids"])
+            logger.info(f"Tool: Retrieved order book for {instrument_id} with {ask_count} asks and {bid_count} bids")
+            
+            return format_data(result, format)
+        else:
+            logger.warning(f"Tool: No order book data returned for {instrument_id}")
+            error_msg = f"No order book data found for instrument {instrument_id}"
+            if format == "json":
+                return {"error": error_msg}
+            else:
+                return f"error: {error_msg}"
+    except (ConnectionError, OKXError, ValueError) as e:
+        logger.error(f"Tool: Error fetching order book for {instrument_id}: {e}", exc_info=True)
+        if format == "json":
+            return {"error": f"Failed to fetch order book for {instrument_id}: {e}"}
+        else:
+            return f"error: Failed to fetch order book for {instrument_id}: {e}"
+    except Exception as e:
+        logger.exception(f"Tool: Unexpected error in get_order_book for {instrument_id}: {e}")
         if format == "json":
             return {"error": f"An unexpected error occurred: {e}"}
         else:
