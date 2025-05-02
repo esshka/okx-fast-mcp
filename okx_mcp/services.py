@@ -202,10 +202,12 @@ def _place_order_internal(
     client_order_id: Optional[str] = None,
     tag: Optional[str] = None,
     reduce_only: Optional[bool] = None,
+    stop_loss_price: Optional[str] = None,
+    take_profit_price: Optional[str] = None
     # is_swap parameter removed, determined by instrument name or context
 ) -> Dict[str, Any]:
     """Internal helper to place a standard order using the client."""
-    logger.info(f"Service: Placing order - Inst: {instrument}, Mode: {trade_mode}, Side: {side}, Type: {order_type}, Size: {size}, Px: {order_price}")
+    logger.info(f"Service: Placing order - Inst: {instrument}, Mode: {trade_mode}, Side: {side}, Type: {order_type}, Size: {size}, Px: {order_price}, SL: {stop_loss_price}, TP: {take_profit_price}")
 
     endpoint = f"{API_V5_PREFIX}/trade/order"
     payload: Dict[str, Any] = {
@@ -225,6 +227,10 @@ def _place_order_internal(
         payload["tag"] = tag
     if reduce_only is not None:
         payload["reduceOnly"] = reduce_only
+    if stop_loss_price:
+        payload["slPx"] = stop_loss_price
+    if take_profit_price:
+        payload["tpPx"] = take_profit_price
 
     try:
         # Make the authenticated request using the client

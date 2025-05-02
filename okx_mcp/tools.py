@@ -275,6 +275,8 @@ def place_swap_limit_order(
     size_usdt: str, # Order size in USDT
     price: str,
     position_side: str, # long, short
+    stop_loss_price: Optional[str] = None,
+    take_profit_price: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Place a limit order for SWAP trading on OKX, specifying size in USDT.
@@ -285,6 +287,8 @@ def place_swap_limit_order(
         size_usdt: Order size in USDT (e.g., "100" for 100 USDT). Will be converted to contract quantity.
         price: Limit price for the order (e.g., "30000" for $30,000).
         position_side: Position side, must be either "long" or "short".
+        stop_loss_price: Optional stop loss price.
+        take_profit_price: Optional take profit price.
         
     Returns:
         A dictionary containing order details including orderId, clientOrderId, and other relevant information.
@@ -301,7 +305,9 @@ def place_swap_limit_order(
         ...     side="buy",
         ...     size_usdt="100",
         ...     price="30000",
-        ...     position_side="long"
+        ...     position_side="long",
+        ...     stop_loss_price="29000",
+        ...     take_profit_price="32000"
         ... )
         {'ordId': '123456789', 'clOrdId': 'okx_123456789', 'tag': '', 'sCode': '0', 'sMsg': ''}
     """
@@ -327,7 +333,9 @@ def place_swap_limit_order(
             order_type="limit",
             size=contract_size_str, # Use the calculated contract size
             order_price=price,
-            position_side=position_side
+            position_side=position_side,
+            stop_loss_price=stop_loss_price,
+            take_profit_price=take_profit_price
         )
     except OKXError as e:
         logger.error(f"Tool: OKX API Error placing SWAP limit order for {instrument}: {e}", exc_info=True)
@@ -356,9 +364,42 @@ def place_spot_limit_order(
     instrument: str,
     side: str, # buy, sell
     size: str, # Order size in base currency (e.g., BTC amount for BTC-USDT)
-    price: str
+    price: str,
+    stop_loss_price: Optional[str] = None,
+    take_profit_price: Optional[str] = None 
 ) -> Dict[str, Any]:
-    """Place a limit order for SPOT trading."""
+    """
+    Place a limit order for SPOT trading on OKX.
+    
+    Args:
+        instrument: The instrument ID (e.g., BTC-USDT). Must not contain '-SWAP'.
+        side: Order side, must be either "buy" or "sell".
+        size: Order size in base currency (e.g., BTC amount for BTC-USDT).
+        price: Limit price for the order.
+        stop_loss_price: Optional stop loss price.
+        take_profit_price: Optional take profit price.
+        trade_mode: Trading mode, either "cash" or "cross". Default is "cash".
+        
+    Returns:
+        A dictionary containing order details including orderId, clientOrderId, and other relevant information.
+        Returns an error dictionary if the order placement fails.
+        
+    Raises:
+        OKXError: If the OKX API returns an error.
+        ValueError: If parameters are invalid.
+        ConnectionError: If the API request fails.
+        
+    Example:
+        >>> place_spot_limit_order(
+        ...     instrument="BTC-USDT",
+        ...     side="buy",
+        ...     size="0.01",
+        ...     price="30000",
+        ...     stop_loss_price="29000",
+        ...     take_profit_price="32000"
+        ... )
+        {'ordId': '123456789', 'clOrdId': 'okx_123456789', 'tag': '', 'sCode': '0', 'sMsg': ''}
+    """
     logger.info(f"Tool: Placing SPOT limit order - Inst: {instrument}, Side: {side}, Size: {size}, Px: {price}")
     if '-SWAP' in instrument or '-FUTURES' in instrument:
          logger.error(f"Tool: Invalid instrument for SPOT order: {instrument}")
@@ -377,7 +418,9 @@ def place_spot_limit_order(
             side=side,
             order_type="limit",
             size=corrected_size,
-            order_price=price
+            order_price=price,
+            stop_loss_price=stop_loss_price,
+            take_profit_price=take_profit_price
         )
     except (ValueError, ConnectionError, OKXError) as e:
          logger.error(f"Tool: Error placing SPOT limit order for {instrument}: {e}", exc_info=True)
