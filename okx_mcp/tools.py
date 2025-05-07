@@ -122,7 +122,7 @@ def get_candlesticks(instrument: str, bar: str = "1m", limit: int = 100, format:
 
     Args:
         instrument: The instrument ID (e.g., BTC-USDT, BTC-USDT-SWAP).
-        bar: Candlestick interval (e.g., 1m, 5m, 1H, 1D). Default is "1m".
+        bar: Candlestick interval (e.g., 1m/3m/5m/15m/30m/1H/2H/4H). Default is "1m". Important:Hourly bar is capital H (1H, 2H, 4H). Daily bar is D (1D).
         limit: Number of candlesticks to retrieve (max typically 100). Default is 100.
         format: Output format (json, csv, md, yaml). Default is "json".
 
@@ -735,11 +735,15 @@ def place_contract_grid_algo_order(
     max_price: str,
     min_price: str,
     grid_num: str,
+    direction: str,  # "long", "short", "neutral"
+    lever: str,      # Leverage
+    margin_amount: str,  # Used margin in USDT
     grid_run_type: str = "1", 
-    investment_amount: Optional[str] = None, 
-    contract_order_size: Optional[str] = None, 
+    base_pos: Optional[bool] = False,
     tp_trigger_px: Optional[str] = None,
-    sl_trigger_px: Optional[str] = None
+    sl_trigger_px: Optional[str] = None,
+    tp_ratio: Optional[str] = None,
+    sl_ratio: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Place a contract grid algo order on OKX (for SWAP/FUTURES).
@@ -752,24 +756,26 @@ def place_contract_grid_algo_order(
         max_price: Upper price of the grid range.
         min_price: Lower price of the grid range.
         grid_num: Number of grids (integer as string).
+        direction: Contract grid type: "long", "short", or "neutral".
+        lever: Leverage for the grid.
+        margin_amount: Used margin based on USDT.
         grid_run_type: Grid type: "1" (Arithmetic), "2" (Geometric). Default is "1".
-        investment_amount: Investment amount in quote currency (e.g., USDT).
-            Required if contract_order_size is not set.
-        contract_order_size: Size per grid order in contracts.
-            Required if investment_amount is not set.
+        base_pos: Whether to open a position when strategy activates. Default is False.
+                  Neutral contract grid should omit this.
         tp_trigger_px: Take-profit trigger price.
         sl_trigger_px: Stop-loss trigger price.
+        tp_ratio: Take-profit ratio (e.g., "0.1" for 10%).
+        sl_ratio: Stop-loss ratio (e.g., "0.1" for 10%).
     
     Returns:
         A dictionary containing order details including algoId and client-supplied algoId.
-        Example: {"algoId": "448965992920907776", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
+        Example: {"algoId": "448965992920907777", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
         
         If an error occurs, returns a dictionary with error information:
         Example: {"error": "Failed to place Contract Grid Algo order: Invalid instrument"}
     
     Raises:
-        ValueError: If neither investment_amount nor contract_order_size is provided,
-                   or if both are provided, or if instrument_id doesn't end with '-SWAP' or '-FUTURES'.
+        ValueError: If parameters are invalid.
         ConnectionError: If the API request fails.
         OKXError: If the OKX API returns an error.
     
@@ -779,37 +785,52 @@ def place_contract_grid_algo_order(
         ...     max_price="35000",
         ...     min_price="25000",
         ...     grid_num="10",
-        ...     investment_amount="1000",
+        ...     direction="long",
+        ...     lever="2",
+        ...     margin_amount="1000",
         ...     tp_trigger_px="40000"
         ... )
         {"algoId": "448965992920907777", "algoClOrdId": "", "sCode": "0", "sMsg": ""}
     """
     logger.info(f"Tool: Placing Contract Grid Algo order for {instrument_id}")
-    if investment_amount is None and contract_order_size is None:
-         return {"error": "Either investment_amount (quote ccy) or contract_order_size (contracts) must be provided."}
-    if investment_amount is not None and contract_order_size is not None:
-         return {"error": "Provide either investment_amount OR contract_order_size, not both."}
+    
+    # Validate instrument type
     if not (instrument_id.endswith('-SWAP') or instrument_id.endswith('-FUTURES')):
          return {"error": "Contract grid orders are only for SWAP or FUTURES instruments."}
+    
+    # Validate direction value
+    if direction not in ["long", "short", "neutral"]:
+        return {"error": "Direction must be one of: 'long', 'short', 'neutral'."}
+    
+    # Validate that we don't set basePos for neutral direction
+    if direction == "neutral" and base_pos is not False:
+        return {"error": "basePos should not be set for neutral direction."}
 
     # Build the data payload for the service function
     data: Dict[str, Any] = {
         "instId": instrument_id,
-        "algoOrdType": "grid",
+        "algoOrdType": "contract_grid",  # Use contract_grid for contract grid orders
         "maxPx": max_price,
         "minPx": min_price,
         "gridNum": grid_num,
         "runType": grid_run_type,
-        "instType": "SWAP" if instrument_id.endswith('-SWAP') else "FUTURES", 
+        "instType": "SWAP" if instrument_id.endswith('-SWAP') else "FUTURES",
+        "direction": direction,
+        "lever": lever,
+        "sz": margin_amount  # Use sz for used margin based on USDT
     }
-    if investment_amount:
-        data["quoteSz"] = investment_amount 
-    if contract_order_size:
-         data["baseSz"] = contract_order_size # Use baseSz for size per grid (contracts)
+    
+    # Add optional parameters
+    if direction != "neutral":
+        data["basePos"] = base_pos
     if tp_trigger_px:
         data["tpTriggerPx"] = tp_trigger_px
     if sl_trigger_px:
         data["slTriggerPx"] = sl_trigger_px
+    if tp_ratio:
+        data["tpRatio"] = tp_ratio
+    if sl_ratio:
+        data["slRatio"] = sl_ratio
 
     try:
         # Call the service function
